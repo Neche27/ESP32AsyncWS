@@ -3,15 +3,12 @@
 #include <ESPmDNS.h>
 #include <ESPAsyncWebServer.h>
 #include <Arduino_JSON.h>
-#include <FS.h>
-#include "LittleFS.h"
 #include <ArduinoOTA.h>
 #include <WebSocketsServer.h>
 #include <Adafruit_Sensor.h>
 #include <DHT.h>
 #include <DHT_U.h>
-
- //Create an instance of the ESP8266WifiMulti class, called 'wifiMulti'
+#include <FastLED.h>
 
 AsyncWebServer server(80); // Create a Asyncwebserver object that listens for HTTP request on port 80
 
@@ -24,30 +21,31 @@ JSONVar lights;
 //Holds the light states
 bool buttons[4] = {false, false, false, false};
 
-//File fsUploadFile;
 
 //Timer variables
 unsigned long lastTime = 0;
-unsigned long timerDelay = 10000;
+unsigned long timerDelay = 5000;
 
 //WiFi ssid and password
-const char* ssid = "SM-G970W1746";//"WIFI-D138";//"NechePhoneWifi";
-const char* password = "zwir6661";//"across6605basic";//"Neche2005";
+const char* ssid = "";
+const char* password = "";
 
 const char* apSSID = "ESP8266_AP"; // The name of the WiFi network that will be created
 const char* apPassword = ""; // The password required to connect to it, leave blank for an open network
-
-// A name and password for the OTA service
-const char* OTAName = "ESP8266";
-const char* OTAPassword = "esp8266";
 
 // specify the pins with an RGB LED connected
 #define LED_D4 19
 #define LED_D2 23
 #define DHT_D1 17
 #define DHTTYPE    DHT11
+#define NUMLED 60
 
 const char* mdnsName = "esp8266LAN"; // Domain name for the mDNS responder
+
+int strSize = 8;
+CRGB colors[8] = {CRGB::Red,CRGB::Blue,CRGB::Green,CRGB::Cyan,CRGB::Violet,CRGB::Orange,CRGB::Black,CRGB::White};
+String strCom[8] = {"Red","Blue","Green","Cyan","violet","Orange","Black","White"};
+CRGB leds[NUMLED];
 
 // Setup function declarations
 void initWiFi();
@@ -55,7 +53,6 @@ void initWebSocket();
 void startMDNS();
 String getSensorReadings();
 void notifyClients(String sensorReadings);
-void initLittleFS();
 
 
 //Server Handler declarations
@@ -66,37 +63,34 @@ void onEvent(AsyncWebSocket* server, AsyncWebSocketClient* client, AwsEventType 
 void ChangeBtn(bool* A, const int& size, const int& btn);
 String formatBytes(size_t bytes);
 String getContentType(String filename);
-void setHue(int hue);
+
+void turnOffLED();
+void ledAnimation1();
+void ledAnimation2();
+void ledAnimation3();
+void turnONLEDSolid(CRGB&);
 
 DHT_Unified dht(DHT_D1, DHTTYPE);
 uint32_t delayMS;
 char clientVal = 'a';
+String val = "";
+unsigned int receivedVal = 0;
 
 void setup() {
   // put your setup code here, to run once:
   // the pins with LEDs connected are outputs
   pinMode(LED_D2, OUTPUT);
   pinMode(LED_D4, OUTPUT);
-
-  Serial.begin(115200); //Start the serial communication to send messages to the computer
+ 
+  Serial.begin(9600);
   delay(250);
   Serial.println("\r\n");
 
-  initWiFi(); // Start a Wi-Fi access point, and try to connect to some given access points. Then wait for either an AP or STA connection
-  //initLittleFS();
-  //startOTA(); // Start the OTA service
-
-  //startSPIFFS(); // Start the SPIFFS and list all contents
+  initWiFi(); // Start a Wi-Fi access point
 
   initWebSocket(); // Start a WebSocket server
 
   startMDNS(); // Start the mDNS responder
-
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest* request){// Start a HTTP server with a file read handler and an upload handler
-    request->send(LittleFS, "/index.html", "text/html");
-  });
-
-  server.serveStatic("/", LittleFS, "/");
 
   server.begin(); //Start server
 
@@ -104,18 +98,80 @@ void setup() {
   sensor_t sensor;
   dht.temperature().getSensor(&sensor);
   delayMS = sensor.min_delay / 1000;
+
+  FastLED.addLeds<WS2812B, LED_D2, GRB>(leds, NUMLED);
+  FastLED.setBrightness(50);
+  Serial.println("ENSC PROJECT......");
 }
 
 void loop() {
   // put your main code here, to run repeatedly:
+  if(Serial.available()){
+    Serial.println("Data From SU-03T");
 
-  //MDNS.update(); // For mDNS processing
+    byte highBits = Serial.read();
+    byte lowBits = Serial.read();
 
-  //ArduinoOTA.handle(); // listen for OTA events
+    receivedVal = (highBits << 8) | lowBits;
+
+    Serial.print("Received HEX values: ");
+    Serial.println(receivedVal, HEX);
+  }
+  if(receivedVal == 0xAA11){
+    fill_solid(leds, NUMLED, CRGB::Green);
+    FastLED.show();
+   } else if(receivedVal == 0xAA12) {
+    turnOffLED();
+  } else if(receivedVal == 0xAA13) {
+    ledAnimation1();
+  } else if(receivedVal == 0xAA14) {
+    ledAnimation2();
+  }
+  
+ delay(10);
+ receivedVal = 0;
+  
+  switch(clientVal)
+      {
+        case 'A':
+          Serial.println(clientVal);
+          ChangeBtn(buttons, 4, 0);
+          ledAnimation1();
+          break;
+        case 'B':
+          Serial.println(clientVal);
+          ChangeBtn(buttons, 4, 1);
+          ledAnimation2();
+          break;
+        case 'C':
+          Serial.println(clientVal);
+          ChangeBtn(buttons, 4, 2);
+          ledAnimation3();
+          break;
+        case 'D':
+          Serial.println(clientVal);
+          ChangeBtn(buttons, 4, 3);
+          ledAnimation1();
+          break;
+        case 'N':
+          Serial.println(clientVal);
+          ChangeBtn(buttons, 4, 4);
+          ledAnimation1();
+          break;
+      }
+      clientVal = 'a';
+      if(val.length() > 2){
+        for(int i = 0; i < strSize; i++)
+        {
+          if(strCom[i] == val)
+          {
+            turnONLEDSolid(colors[i]);
+          }
+        }
+      }
 
   if((millis() - lastTime) > timerDelay){
     String sensorReadings = getSensorReadings();
-    Serial.print(sensorReadings);
     notifyClients(sensorReadings);
     lastTime = millis();
   }
@@ -178,10 +234,6 @@ void startMDNS(){ // Start the mDNS responder
   Serial.println(".local");
 }
 
-void startClient()
-{
-  
-}
 //Server handlers
 
 void handleWebSocketMessage(void* arg, uint8_t* data, size_t len){
@@ -190,6 +242,7 @@ void handleWebSocketMessage(void* arg, uint8_t* data, size_t len){
   {
     data[len] = 0;
     clientVal = (char)data[0];
+    val = (char*)data;
     String message = (char*)data;
     if (strcmp((char*)data, "getReadings") == 0) //Check if the message is "getReadings"
     {
@@ -214,34 +267,6 @@ void onEvent(AsyncWebSocket* server, AsyncWebSocketClient* client, AwsEventType 
       break;
     case WS_EVT_DATA: // if new text data is received
       handleWebSocketMessage(arg, data, len);
-      switch(clientVal)
-      {
-        case 'A':
-         digitalWrite(LED_D4, HIGH);
-         Serial.println(clientVal);
-         ChangeBtn(buttons, 4, 0);
-         break;
-        case 'B':
-         digitalWrite(LED_D4, HIGH);
-         Serial.println(clientVal);
-         ChangeBtn(buttons, 4, 1);
-         break;
-        case 'C':
-         digitalWrite(LED_D4, HIGH);
-         Serial.println(clientVal);
-         ChangeBtn(buttons, 4, 2);
-         break;
-        case 'D':
-         digitalWrite(LED_D4, HIGH);
-         Serial.println(clientVal);
-         ChangeBtn(buttons, 4, 3);
-         break;
-        case 'N':
-        digitalWrite(LED_D4, LOW);
-        Serial.println(clientVal);
-        ChangeBtn(buttons, 4, 4);
-        break;
-      }
       break;
     case WS_EVT_PONG:
     case WS_EVT_ERROR:
@@ -277,28 +302,59 @@ String getSensorReadings(){
   return jsonString;
 }
 
-String getLights(){
-  lights["button_1"] = String(digitalRead(LED_D4));
-  lights["button_2"] = String(digitalRead(LED_D2));
-  String jsonString = JSON.stringify(lights);
-  return jsonString;
+void turnONLEDSolid(CRGB& color){
+  fill_solid(leds, NUMLED, color);
+    FastLED.show();
 }
-
-String formatBytes(size_t bytes) { // convert sizes in bytes to KB and MB
-  if(bytes < 1024){
-    return String(bytes) + "B";
-  } else if (bytes < (1024 * 1024)) {
-    return String(bytes / 1024.0) + "KB";
-  } else {
-    return String(bytes / 1024.0 / 1024.0) + "MB";
-  }
+void turnOffLED(){
+  fill_solid(leds, NUMLED, CRGB::Black);
+    FastLED.show();
 }
-
-String getContentType(String filename) { // determine the filetype of a given filename, based on the extension
-  if(filename.endsWith(".html")) return "text/html";
-  else if (filename.endsWith(".css")) return "text/css";
-  else if (filename.endsWith(".js")) return "application/javascript";
-  else if (filename.endsWith(".ico")) return "image/x-icon";
-  else if (filename.endsWith(".gz")) return "application/x-gzip";
-  return "text/plain";
+void ledAnimation1(){
+  for (int i = 0; i < NUMLED; i++)
+    {
+      if(ws.availableForWriteAll()){
+      leds[i] = CRGB::Green;
+      FastLED.show();
+      delay(250);
+      leds[i] = CRGB::Black;
+      FastLED.show();
+    }
+    }
+}
+void ledAnimation2(){
+  for (int i = 0; i < NUMLED; i++)
+    {
+      if(ws.availableForWriteAll()){
+      leds[i] = CRGB::Blue;
+      FastLED.show();
+      delay(250);
+      leds[i] = CRGB::Green;
+      FastLED.show();
+      delay(250);
+      leds[i] = CRGB::Red;
+      FastLED.show();
+      delay(250);
+      leds[i] = CRGB::Black;
+      FastLED.show();
+    }
+    }
+}
+void ledAnimation3(){
+  for (int i = 0; i < NUMLED; i++)
+    {
+      if(ws.availableForWriteAll()){
+      leds[i] = CRGB::BlueViolet;
+      FastLED.show();
+      delay(250);
+      leds[i] = CRGB::Yellow;
+      FastLED.show();
+      delay(250);
+      leds[i] = CRGB::Purple;
+      FastLED.show();
+      delay(250);
+      leds[i] = CRGB::Black;
+      FastLED.show();
+    }
+    }
 }
